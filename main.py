@@ -15,6 +15,7 @@ Output: $MAKEFUN_OUTPUT_DIR/entry.png  (1024x1024, under 1 MiB)
 """
 
 import json
+import math
 import os
 import struct
 import sys
@@ -343,7 +344,7 @@ STORIES = [
     ("ME",  "Iraq court: Baghdad controls Kurdish borders", "Reuters 19:00 UTC · REPORTED"),
     ("ME",  "Lebanon to open second airport at Kleiat", "Reuters · REPORTED"),
     ("ME",  "Iran VP: US blockade “not concerning”", "Reuters · REPORTED"),
-    ("ME",  "Libya vows revenge on Kyiv", "AP · REPORTED"),
+    ("ME",  "Libya vows revenge on Kyiv " + WARN, "AP · vow reported Wed; officers died Tue night · REPORTED"),
     ("ASIA", "Shenzhou-24 carries Pakistani astronaut", "AP 00:30 UTC · REPORTED"),
     ("ASIA", "Kospi plunges 6.2% on AI doubts", "AP 04:05 UTC · REPORTED"),
     ("ASIA", "West Java gold-mine flood kills 9", "AP 07:10 UTC · REPORTED"),
@@ -389,12 +390,12 @@ HEROES = [
      "Shenzhou-24 carries a Pakistani astronaut",
      "Zeeshan Ali, 40, is the first Pakistani — and first foreigner — "
      "aboard Tiangong. Docked 03:56 UTC.",
-     "AP 00:30 UTC · REPORTED", "rocket"),
+     "AP 00:30 UTC · launch, docked 03:56 · REPORTED", "rocket"),
     ("ASIA · MARKETS · #37",
      "Kospi plunges 6.2% as AI doubts spread",
      "SK Hynix −11.1%, Samsung −9.9%. Seoul's worst day since January; "
      "Taiwan −4.8%, Nikkei −2.8%.",
-     "AP 04:05 UTC · REPORTED", "chart"),
+     "Korea Exchange close 06:30 UTC · REPORTED", "chart"),
 ]
 
 TIMELINE = [
@@ -419,7 +420,8 @@ FOOT_L2 = ("LEFT OUT — they happened earlier: Huawei guilty verdict (Tue 24) �
            "COP31 collapse (Sun 22) · Dow tops 50,000 (Tue 24).")
 FOOT_L3 = ("FLAGGED " + WARN + " #10 Cartagena — siege began Tue, hostages freed Wed · "
            "#25 Blue Nile — strike Tue night, first reported Wed · #26 Ebola, Ituri — "
-           "first mention Tue 23:58 UTC, authoritative report Wed 18:50 UTC. "
+           "first mention Tue 23:58 UTC, authoritative report Wed 18:50 UTC · "
+           "#35 Libya — officers died Tue night, LNA vow reported Wed. "
            "NOT YET: Spain votes Sun 29 Nov · Dhaka rise takes effect Dec · "
            "UK cap applies 1 Jan 2027.")
 FOOT_L4 = ("Sources: Reuters · AP · BBC · AFP · ESA · FCC · Ofgem · BEA · Caltech · "
@@ -499,8 +501,9 @@ def draw_masthead(cv, at):
     at.draw_center(cv, W // 2, 56, "WEDNESDAY, 25 NOVEMBER 2026",
                    "sans", "bold", 15, INK)
     at.draw_center(cv, W // 2, 72,
-                   "Houthis claim Ras Tanura hit  ·  Kospi sinks 6.2%  ·  "
-                   "US plans tariffs on 14 economies  ·  Cairo tanker fire kills 30+",
+                   "Shenzhou-24 carries a Pakistani astronaut  ·  "
+                   "US plans tariffs on 14 economies  ·  Kospi sinks 6.2%  ·  "
+                   "Cairo tanker fire kills 30+",
                    "sans", "regular", 11, RED)
     cv.hline(16, W - 16, 88, INK, 2)
     cv.hline(16, W - 16, 91, INK, 1)
@@ -511,7 +514,7 @@ def draw_strip(cv, at, y):
         ("48", "STORIES — ALL DATED 25 NOV"),
         ("8", "REGIONS COVERED"),
         ("16", "MOMENTS ON THE UTC TIMELINE"),
-        ("3", "BORDERLINE CASES, FLAGGED " + WARN),
+        ("4", "BORDERLINE CASES, FLAGGED " + WARN),
         ("0", "STORIES FROM BEFORE 25 NOV"),
     ]
     cw = (W - 32) // 5
@@ -638,18 +641,36 @@ def draw_map(cv, at, y):
     at.draw(cv, 96, top + 118, "PACIFIC OCEAN", "sans", "bold", 8, (140, 148, 152))
     at.draw(cv, 392, top + 132, "ATLANTIC OCEAN", "sans", "bold", 8, (140, 148, 152))
     at.draw(cv, 690, top + 140, "INDIAN OCEAN", "sans", "bold", 8, (140, 148, 152))
-    # pins, with collision nudges
+    # pins, with radial collision nudges: candidates on expanding rings
+    # around the true position; take the first >=17px from every placed
+    # pin, else the candidate farthest from its nearest neighbour, so no
+    # two numbers ever stack. (The old 9-offset list silently fell back
+    # to (0, 0) when all 9 failed, and pins 13/18/19 — three London
+    # stories within ~2px of each other — collapsed into one blob
+    # reading "19". A nudged pin keeps a dot + leader line at its true
+    # position.)
     placed = []
+    ring = [(0, 0)]
+    for r in (11, 16, 22, 28, 34, 42, 50):
+        for k in range(8):
+            a = k * math.pi / 4
+            ring.append((int(round(r * math.cos(a))),
+                         int(round(-r * math.sin(a)))))
     for n, (lon, lat) in enumerate(PINS, 1):
         px, py = proj(lon, lat)
         px, py = int(round(px)), int(round(py))
         ox, oy = 0, 0
-        for dx, dy in [(0, 0), (11, -9), (-11, -9), (11, 9), (-11, 9),
-                       (15, 0), (-15, 0), (0, -13), (0, 13)]:
-            if all((px + dx - qx) ** 2 + (py + dy - qy) ** 2 >= 15 ** 2
-                   for qx, qy in placed):
+        best, best_d = (0, 0), -1
+        for dx, dy in ring:
+            d = min(((px + dx - qx) ** 2 + (py + dy - qy) ** 2
+                     for qx, qy in placed), default=10 ** 9)
+            if d >= 17 ** 2:
                 ox, oy = dx, dy
                 break
+            if d > best_d:
+                best, best_d = (dx, dy), d
+        else:
+            ox, oy = best
         if (ox, oy) != (0, 0):
             cv.fill_circle(px, py, 2, RED)
             cv.line(px, py, px + ox, py + oy, RED, 1)
